@@ -1,0 +1,177 @@
+# Prompt para Sonnet 4.5 – Práctica EVCharging SD 25/26
+
+Genera el código completo para la práctica **EVCharging - SD 25/26**, siguiendo fielmente las especificaciones del documento “Practica_SD2526_EVCharging_V2.pdf” y cumpliendo los criterios de la guía de corrección “CorreccionPracticaSD.pdf”.  
+Todo debe desarrollarse en **Python** y ejecutarse completamente desde **terminal**, sin interfaz gráfica.  
+No incluyas ningún comentario en inglés, ni texto que haga referencia al uso de IA. No utilices emoticonos.
+
+---
+
+## Estructura de directorios
+
+La práctica debe organizarse con la siguiente estructura:
+
+/run.py
+/config/config.yaml
+/Central/EV_Central.py
+/Driver/EV_Driver.py
+/Cargador/EV_CP_E.py
+/Cargador/EV_CP_M.py
+/Extras/
+
+
+La carpeta **Extras** contendrá scripts de apoyo, utilidades y mecanismos de detección automática del broker Kafka en la red del aula.
+
+---
+
+## Objetivo general
+
+El sistema simulará una **red de recarga de vehículos eléctricos distribuida**, con comunicación mediante **sockets TCP** y **Kafka** para el intercambio de eventos en tiempo real.  
+La arquitectura estará compuesta por los siguientes módulos:
+
+### EV_Central
+- Representa la central de control.
+- Gestiona todos los puntos de recarga.
+- Autoriza o deniega peticiones de carga enviadas por los conductores.
+- Mantiene actualizado el estado de cada punto (activado, parado, suministrando, averiado o desconectado).
+- Recibe periódicamente mensajes de los CPs y sus monitores.
+- Puede enviar órdenes globales o individuales (por ejemplo, parar o reanudar todos los puntos).
+
+### EV_CP_E (Engine)
+- Módulo principal de cada punto de recarga.
+- Simula el proceso de carga, enviando datos de consumo e importe cada segundo a la central.
+- Permite simular el enchufado o desenchufado del vehículo mediante opciones en menú de terminal.
+- Informa al monitor local de su estado (OK o KO).
+
+### EV_CP_M (Monitor)
+- Supervisa el estado del Engine.
+- Envía mensajes periódicos de “salud” a la central.
+- Si no recibe respuesta del Engine o recibe un mensaje KO, informa de avería o desconexión.
+- Cuando el CP se recupera, notifica a la central para actualizar su estado.
+
+### EV_Driver
+- Aplicación que representa al conductor.
+- Envía peticiones de recarga a la central.
+- Puede hacerlo manualmente o leyendo un fichero de servicios.
+- Recibe respuestas de autorización, denegación y finalización de carga.
+
+### Extras
+- Contendrá los scripts para la **configuración automática de Kafka** y el **descubrimiento automático** del broker dentro de la red.
+- Permitirá que al desplegar los componentes en distintos ordenadores, solo sea necesario editar la IP de la central en un archivo común.
+- Incluye utilidades como control de logs, gestión de excepciones o configuración común.
+
+---
+
+## Mecánica de funcionamiento
+
+1. Se ejecuta **EV_Central**, que permanece activa indefinidamente escuchando conexiones.  
+   Muestra en su terminal el estado de todos los puntos conocidos. Los no conectados aparecerán como “Desconectados”.
+
+2. Los **puntos de recarga** (EV_CP_E y EV_CP_M) se inician en otros equipos.  
+   - El monitor se registra en la central e informa de su estado inicial.  
+   - El engine queda esperando órdenes de servicio.  
+   - Ambos se comunican entre sí y con la central.
+
+3. Los **conductores** ejecutan EV_Driver.  
+   - Envían peticiones de servicio indicando el ID del punto de recarga.  
+   - La central valida que el punto está disponible y operativo.  
+   - Si se autoriza, notifica al CP y al conductor.  
+   - El CP comienza la simulación de carga, enviando cada segundo los datos de consumo y coste.
+
+4. El sistema debe ser **totalmente asíncrono y concurrente**.  
+   - Todos los componentes funcionan en paralelo mediante threads o asyncio.  
+   - Los módulos pueden conectarse o desconectarse sin detener el sistema.  
+   - Si algún módulo falla o se cierra abruptamente, el resto sigue funcionando correctamente.
+
+5. Los estados del CP dependen de los mensajes OK/KO:
+   - Monitor_OK + Engine_OK → Activado (verde)
+   - Monitor_OK + Engine_KO → Averiado (rojo)
+   - Monitor_KO + Engine_OK → Desconectado (gris)
+   - Ambos KO → Desconectado  
+   Los mensajes **OK** y **KO** son esenciales para que la central determine el estado real del sistema y reaccione adecuadamente.
+
+6. Al finalizar una recarga, el CP notifica a la central y esta al conductor.  
+   Si el conductor tiene más servicios en su fichero, espera 4 segundos antes de solicitar el siguiente.
+
+7. Los mensajes de comunicación seguirán un formato tipo:
+<STX><CÓDIGO>#<CAMPO1>#...#<CAMPON><ETX><LRC>
+
+donde `<LRC>` es el XOR de los bytes anteriores.  
+Las respuestas serán `<ACK>` o `<NACK>` según éxito o fallo.
+
+---
+
+## Configuración general
+
+Toda la configuración del sistema residirá en un único archivo YAML (`/config/config.yaml`), que incluirá:
+
+- IP y puerto de la central.  
+- IP y puerto del broker Kafka.  
+- Topics de comunicación.  
+- Identificadores de CPs y Drivers.  
+- Puertos de escucha.  
+- Rutas de ficheros.  
+
+El objetivo es que en el aula bastará con cambiar una única línea (la IP de la central) para que todos los equipos se conecten correctamente, sin necesidad de modificar código.
+
+---
+
+## Ejecución simplificada
+
+El archivo `run.py` será el punto de entrada para todos los módulos.  
+Permitirá ejecutar cualquier componente desde terminal con comandos como:
+
+python run.py central
+python run.py cp_engine --id CP01
+python run.py cp_monitor --id CP01
+python run.py driver --id D01
+
+
+Cada ejecución leerá la configuración desde `config.yaml` y lanzará el módulo correspondiente.
+
+---
+
+## Despliegue Docker
+
+- Existirá un **único Dockerfile** multietapa, que permitirá generar imágenes para cualquier módulo usando un argumento de compilación `MODULE`.  
+- Se incluirá un **docker-compose.yml** en la raíz del proyecto, que desplegará:
+  - La central.  
+  - Un contenedor Kafka (con Zookeeper).  
+  - Al menos dos puntos de recarga (engine y monitor).  
+  - Un conductor.  
+- Todo el sistema podrá iniciarse con:
+docker-compose up
+
+- Los scripts de `/Extras/` permitirán la detección automática del broker Kafka para conectar todos los módulos sin intervención manual.
+
+---
+
+## Requisitos de corrección y evaluación
+
+El desarrollo debe cumplir todos los apartados de la guía de corrección oficial:
+
+- Modularidad, escalabilidad y resiliencia.  
+- Configuración completamente externa, sin recompilar.  
+- Recuperación automática ante fallos.  
+- Control de errores con mensajes claros en terminal.  
+- Funcionamiento concurrente y asíncrono.  
+- Uso correcto de Docker y docker-compose.  
+- Despliegue distribuido en tres ordenadores (central, CPs y drivers).  
+- Simulación de caídas (Ctrl+C) sin detener el sistema completo.  
+- Logs y estados siempre visibles desde la terminal.  
+
+La práctica no será evaluable si no se logra desplegar el escenario mínimo en tres máquinas o contenedores conectados por red.
+
+---
+
+## Entregables a generar
+
+1. Código completo de todos los módulos.  
+2. `Dockerfile` y `docker-compose.yml` en el directorio raíz.  
+3. Archivo `/config/config.yaml` parametrizable.  
+4. Scripts de autodetección en `/Extras/`.  
+5. Comentarios en español explicando la lógica de cada módulo.  
+6. Ejecución demostrable con `docker-compose up` o en red local con tres equipos.
+
+---
+
+**Fin del prompt.**

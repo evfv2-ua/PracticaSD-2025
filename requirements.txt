@@ -1,0 +1,10 @@
+# Dependencias del proyecto EVCharging - SD 25/26
+
+# Kafka (usando fork compatible con Python 3.12+)
+kafka-python-ng==2.2.2
+
+# YAML
+PyYAML==6.0.1
+
+# Utilidades
+python-dotenv==1.0.0

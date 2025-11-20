@@ -1,0 +1,18 @@
+kafka:
+  broker: "localhost:9092"
+  topic_central: "ev_central_requests"   # driver -> central
+  topic_driver: "ev_central_responses"   # central -> driver
+  topic_cp_commands: "ev_cp_commands"    # central -> cp (commands)
+  topic_cp_data: "ev_cp_data"            # cp -> central (telemetry)
+  topic_cp_status: "ev_cp_status"        # cp -> monitor/central (status/heartbeat)
+cps:
+  CP01:
+    price_per_kwh: 0.25
+    heartbeat_interval: 5
+  CP02:
+    price_per_kwh: 0.30
+    heartbeat_interval: 5
+simulation:
+  charge_interval: 1
+  charge_duration: 120
+message_codes: {}
