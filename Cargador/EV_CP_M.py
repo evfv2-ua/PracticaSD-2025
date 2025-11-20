@@ -13,12 +13,13 @@ import os
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
 from datetime import datetime
+from Extras.utils import resolve_broker
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(BASE, "..", "config", "config.yaml"), "r") as f:
     config = yaml.safe_load(f)
 
-BROKER = os.getenv("KAFKA_BROKER", config["kafka"]["broker"])
+BROKER = resolve_broker(config, "CP_MONITOR")
 TOPIC_CP_STATUS = config["kafka"]["topic_cp_status"]
 TOPIC_CP_DATA = config["kafka"]["topic_cp_data"]
 

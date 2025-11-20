@@ -11,11 +11,12 @@ import sqlite3
 from datetime import datetime, timezone
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
+from Extras.utils import resolve_broker
 
 with open("config/config.yaml","r") as f:
     config = yaml.safe_load(f)
 
-BROKER = os.getenv("KAFKA_BROKER", config["kafka"]["broker"])
+BROKER = resolve_broker(config, "CENTRAL")
 DB_PATH = os.getenv("CENTRAL_DB", "Central/bdd/evcharging.db")
 TOPIC_CENTRAL = config["kafka"]["topic_central"]      # driver -> central
 TOPIC_DRIVER = config["kafka"]["topic_driver"]        # central -> driver
