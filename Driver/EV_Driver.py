@@ -21,6 +21,7 @@ import time
 import json
 import threading
 import yaml
+import os
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
 
@@ -38,7 +39,8 @@ except Exception as e:
         }
     }
 
-KAFKA_BROKER = config['kafka'].get('broker', 'localhost:9092')
+# Permite configurar el broker desde env para despliegues en hosts separados.
+KAFKA_BROKER = os.getenv('KAFKA_BROKER', config['kafka'].get('broker', 'localhost:9092'))
 TOPIC_CENTRAL = config['kafka'].get('topic_central', 'ev_central')
 TOPIC_DRIVER = config['kafka'].get('topic_driver', 'ev_driver')
 
@@ -50,6 +52,7 @@ class Driver:
         self.state = 'idle'  # idle, requesting, authorized, charging, finished, error
         self.lock = threading.Lock()
         self.running = True
+        self.current_cp = None
         self._connect_kafka()
 
     def _connect_kafka(self):
@@ -131,6 +134,7 @@ class Driver:
                     self.mostrar_estado()
                 elif cmd == 'q':
                     print("Saliendo...")
+                    self.shutdown()
                     self.running = False
                     break
                 elif cmd == '':
@@ -139,6 +143,7 @@ class Driver:
                     print("Comando no reconocido. Opciones: 1, 2, 3, 4, q")
             except KeyboardInterrupt:
                 print("\nInterrupción recibida. Saliendo...")
+                self.shutdown()
                 self.running = False
                 break
 
@@ -149,6 +154,7 @@ class Driver:
                 print(f"[Driver {self.id_driver}] No se puede solicitar: estado actual = {self.state}")
                 return
             self.state = 'requesting'
+            self.current_cp = cp_id
         msg = {
             "type": "REQUEST_CHARGE",
             "driver_id": self.id_driver,
@@ -194,11 +200,14 @@ class Driver:
                 return
             prev_state = self.state
             self.state = 'idle'
+            target_cp = self.current_cp
+            self.current_cp = None
         print(f"[Driver {self.id_driver}] Recarga cancelada (antes: {prev_state}).")
         # Notificar a CENTRAL (opcional pero útil para sincronizar)
         msg = {
             "type": "CANCEL_CHARGE",
             "driver_id": self.id_driver,
+            "cp_id": target_cp,
             "timestamp": time.time()
         }
         try:
@@ -233,15 +242,18 @@ class Driver:
         if mtype == 'AUTH_OK' or mtype == 'AUTHORIZED':
             with self.lock:
                 self.state = 'authorized'
+                self.current_cp = data.get('cp_id', self.current_cp)
             print(f"[Driver {self.id_driver}] Autorizado por CENTRAL. Conectar vehículo para iniciar suministro.")
         elif mtype == 'AUTH_DENIED' or mtype == 'DENIED':
             with self.lock:
                 self.state = 'idle'
+                self.current_cp = None
             reason = data.get('reason', 'sin motivo dado')
             print(f"[Driver {self.id_driver}] Autorización denegada: {reason}")
         elif mtype == 'START_CHARGING' or mtype == 'CHARGING_STARTED':
             with self.lock:
                 self.state = 'charging'
+                self.current_cp = data.get('cp_id', self.current_cp)
             print(f"[Driver {self.id_driver}] Inicio de suministro. Datos iniciales: {data.get('info', {})}")
         elif mtype == 'CHARGING_UPDATE':
             # Mensajes periódicos durante la carga: kwh, cost
@@ -256,17 +268,37 @@ class Driver:
             print(f"[Driver {self.id_driver}] Recarga finalizada. Ticket: {ticket}")
             with self.lock:
                 self.state = 'idle'
+                self.current_cp = None
         elif mtype == 'CP_ERROR' or mtype == 'ERROR':
             err = data.get('error', 'error desconocido')
             print(f"[Driver {self.id_driver}] Error en CP/CENTRAL: {err}")
             with self.lock:
                 self.state = 'error'
+                self.current_cp = None
         elif mtype == 'BROADCAST':
             # Mensajes informativos globales
             text = data.get('message', '')
             print(f"[Driver {self.id_driver}] Broadcast: {text}")
         else:
             print(f"[Driver {self.id_driver}] Mensaje desconocido recibido: {data}")
+
+    def shutdown(self):
+        """Cancela carga activa antes de salir."""
+        with self.lock:
+            active = self.state in ('requesting', 'authorized', 'charging')
+            cp_target = self.current_cp
+        if active:
+            msg = {
+                "type": "CANCEL_CHARGE",
+                "driver_id": self.id_driver,
+                "cp_id": cp_target,
+                "timestamp": time.time()
+            }
+            try:
+                self.producer.send(TOPIC_CENTRAL, value=msg)
+                self.producer.flush(timeout=2)
+            except Exception:
+                pass
 
 def main(driver_id=None):
     # Permitir llamar main() con argumento o desde CLI
