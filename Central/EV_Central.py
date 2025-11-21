@@ -198,6 +198,7 @@ def handle_cp_messages():
             st = data.get("status","ok")
             entry = CP_REGISTRY.setdefault(cp_id, {"registered":False, "last_seen": None, "status": "unknown", "info":{}})
             entry["last_seen"] = time.time()
+            entry["status"] = st
             # Solo actualizamos a faulty si viene un FAULT; los heartbeats con faulty se ignoran.
             if st != "faulty":
                 upsert_cp(cp_id, st)
@@ -324,14 +325,21 @@ def snapshot_data():
     for cp_id, info in CP_REGISTRY.items():
         status_raw = info.get("status","unknown")
         last_seen = info.get("last_seen")
-        stale = last_seen and now - last_seen > STALE_THRESHOLD
-        status = "DESCONECTADO"
-        if status_raw == "faulty":
-            status = "AVERIA"
-        elif not stale:
-            status = "CONECTADO"
-            if cp_id in active_by_cp:
-                status = "CARGANDO"
+        if isinstance(last_seen, str):
+            try:
+                last_seen = datetime.fromisoformat(last_seen).timestamp()
+            except Exception:
+                last_seen = None
+        stale = (last_seen is None) or (now - last_seen > STALE_THRESHOLD)
+        if stale:
+            status = "DESCONECTADO"
+        else:
+            if status_raw == "faulty":
+                status = "AVERIA"
+            else:
+                status = "CONECTADO"
+                if cp_id in active_by_cp:
+                    status = "CARGANDO"
         cps.append({
             "cp_id": cp_id,
             "status": status,

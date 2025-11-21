@@ -1,5 +1,7 @@
-# Fichero de servicios para el Driver D${i}
-# Cada línea representa una petición de recarga en un CP
-# Formato: CP_ID
-
+# Fichero de servicios para el Driver D04
+# Cada línea: CP_ID (máximo 5 CP distintos)
+CP04
+CP02
+CP03
+CP04
 CP01

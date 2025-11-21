@@ -118,7 +118,7 @@ class Driver:
             print(f"{'='*60}")
             print("Comandos:")
             print("  1 - Solicitar recarga manual")
-            print("  2 - Solicitar recarga desde fichero de servicios")
+            print("  2 - Carga automática (fichero de servicios por ID)")
             print("  3 - Cancelar recarga en curso")
             print("  4 - Mostrar estado actual")
             print("  q - Salir")
@@ -131,8 +131,7 @@ class Driver:
                     cp_id = input("Introduce el ID del punto de recarga (CPxx): ").strip().upper()
                     self.solicitar_recarga(cp_id)
                 elif cmd == '2':
-                    file_path = input("Ruta del fichero de servicios: ").strip()
-                    self.solicitar_recarga_fichero(file_path)
+                    self.solicitar_recarga_fichero()
                 elif cmd == '3':
                     self.cancelar_recarga()
                 elif cmd == '4' or cmd == 's':
@@ -192,14 +191,23 @@ class Driver:
             with self.lock:
                 self.state = 'error'
 
-    def solicitar_recarga_fichero(self, file_path):
+    def _default_services_path(self):
+        base = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base, f"servicios_{self.id_driver}.txt")
+
+    def solicitar_recarga_fichero(self, file_path=None):
+        if not file_path:
+            file_path = self._default_services_path()
         print(f"[Driver {self.id_driver}] Procesando servicios desde fichero: {file_path}")
         try:
             with open(file_path, 'r') as f:
                 for line in f:
                     if not self.running:
                         break
-                    cp_id = line.strip().split()[0]
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    cp_id = line.split()[0]
                     if not cp_id:
                         continue
                     self.solicitar_recarga(cp_id)
