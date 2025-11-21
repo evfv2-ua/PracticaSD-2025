@@ -15,6 +15,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+def resolve_broker(conf, module_name=None):
+    # Env prioridad: KAFKA_BROKER_MODULE o KAFKA_BROKER
+    if module_name:
+        env_key = f"KAFKA_BROKER_{module_name.upper()}"
+        val = os.getenv(env_key)
+        if val:
+            return val
+    val = os.getenv("KAFKA_BROKER")
+    if val:
+        return val
+    return conf["kafka"]["broker"]
+
 with open("config/config.yaml","r") as f:
     config = yaml.safe_load(f)
 
