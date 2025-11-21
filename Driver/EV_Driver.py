@@ -22,9 +22,21 @@ import json
 import threading
 import yaml
 import os
-from Extras.utils import resolve_broker
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
+try:
+    from Extras.utils import resolve_broker
+except Exception:
+    def resolve_broker(conf, module_name=None):
+        if module_name:
+            env_key = f"KAFKA_BROKER_{module_name.upper()}"
+            val = os.getenv(env_key)
+            if val:
+                return val
+        val = os.getenv('KAFKA_BROKER')
+        if val:
+            return val
+        return conf['kafka'].get('broker', 'localhost:9092')
 
 # Cargar configuración
 try:

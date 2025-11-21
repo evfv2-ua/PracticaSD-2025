@@ -13,7 +13,19 @@ import os
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
 from datetime import datetime
-from Extras.utils import resolve_broker
+try:
+    from Extras.utils import resolve_broker
+except Exception:
+    def resolve_broker(conf, module_name=None):
+        if module_name:
+            env_key = f"KAFKA_BROKER_{module_name.upper()}"
+            val = os.getenv(env_key)
+            if val:
+                return val
+        val = os.getenv("KAFKA_BROKER")
+        if val:
+            return val
+        return conf["kafka"]["broker"]
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(BASE, "..", "config", "config.yaml"), "r") as f:
