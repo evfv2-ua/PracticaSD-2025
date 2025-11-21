@@ -22,6 +22,7 @@ import json
 import threading
 import yaml
 import os
+from Extras.utils import resolve_broker
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError, NoBrokersAvailable
 
@@ -40,7 +41,7 @@ except Exception as e:
     }
 
 # Permite configurar el broker desde env para despliegues en hosts separados.
-KAFKA_BROKER = os.getenv('KAFKA_BROKER', config['kafka'].get('broker', 'localhost:9092'))
+KAFKA_BROKER = resolve_broker(config, "DRIVER")
 TOPIC_CENTRAL = config['kafka'].get('topic_central', 'ev_central')
 TOPIC_DRIVER = config['kafka'].get('topic_driver', 'ev_driver')
 
