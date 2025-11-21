@@ -53,6 +53,7 @@ class Driver:
         self.lock = threading.Lock()
         self.running = True
         self.current_cp = None
+        self._stop = threading.Event()
         self._connect_kafka()
 
     def _connect_kafka(self):
@@ -84,6 +85,9 @@ class Driver:
         # Lanzar thread para escuchar Kafka
         kafka_thread = threading.Thread(target=self.kafka_loop, daemon=True)
         kafka_thread.start()
+        # Lanzar heartbeat/hello a CENTRAL
+        hb_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
+        hb_thread.start()
         # Lanzar interfaz de usuario principal
         self.user_interface()
 
@@ -146,6 +150,23 @@ class Driver:
                 self.shutdown()
                 self.running = False
                 break
+
+    def heartbeat_loop(self):
+        """Envía un HELLO/heartbeat periódico a CENTRAL para visibilidad."""
+        while not self._stop.is_set():
+            msg = {
+                "type": "DRIVER_HELLO",
+                "driver_id": self.id_driver,
+                "state": self.state,
+                "cp_id": self.current_cp,
+                "timestamp": time.time(),
+            }
+            try:
+                self.producer.send(TOPIC_CENTRAL, value=msg)
+                self.producer.flush(timeout=2)
+            except Exception:
+                pass
+            time.sleep(15)
 
     def solicitar_recarga(self, cp_id):
         """Envía solicitud de recarga a CENTRAL por Kafka."""
@@ -299,6 +320,7 @@ class Driver:
                 self.producer.flush(timeout=2)
             except Exception:
                 pass
+        self._stop.set()
 
 def main(driver_id=None):
     # Permitir llamar main() con argumento o desde CLI

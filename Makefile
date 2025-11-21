@@ -25,6 +25,9 @@ help:
 	@echo "  make run-cp-engine CP_ID=CP01"
 	@echo "  make run-cp-monitor CP_ID=CP01"
 	@echo "  make run-driver DRIVER_ID=D01"
+	@echo "  make web-install           # instala dependencias web/"
+	@echo "  make web-dev               # levanta Vite (frontend)"
+	@echo "  make web-build             # build de producción frontend"
 	@echo ""
 	@echo "Ejecución múltiple:"
 	@echo "  make run-cps N=3"
@@ -51,6 +54,22 @@ run-driver:
 	$(PYTHON) Driver/EV_Driver.py $(DRIVER_ID)
 
 # -----------------------------------------------------------
+# FRONTEND (opcional)
+# -----------------------------------------------------------
+
+web-install:
+	@echo "[WEB] Instalando dependencias (web/)"
+	cd web && npm install
+
+web-dev:
+	@echo "[WEB] Ejecutando Vite dev server en web/ (http://localhost:5173)"
+	cd web && npm run dev -- --host
+
+web-build:
+	@echo "[WEB] Build de producción (web/dist)"
+	cd web && npm run build
+
+# -----------------------------------------------------------
 # EJECUCIÓN MÚLTIPLE AUTOMÁTICA
 # -----------------------------------------------------------
 
@@ -70,4 +89,3 @@ run-drivers:
 		echo " - Lanzando Driver $$ID"; \
 		gnome-terminal --title="Driver $$ID" -- bash -c "make run-driver DRIVER_ID=$$ID; exec bash" & \
 	done
-

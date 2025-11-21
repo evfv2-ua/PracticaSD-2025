@@ -30,6 +30,8 @@ class Monitor:
         self._kafka_lock = threading.Lock()
         self.last_heartbeat = None
         self.engine_state = "unknown"  # ok | faulty | disconnected | unknown
+        self._start_ts = time.time()
+        self._fault_sent = False
         self._connect_kafka()
         self.is_faulty = False
         # Register on start
@@ -80,8 +82,10 @@ class Monitor:
                         self.last_heartbeat = time.time()
                         if data.get("status") == "faulty":
                             self.engine_state = "faulty"
+                            self._fault_sent = True
                         else:
                             self.engine_state = "ok"
+                            self._fault_sent = False
                     # Logs reducidos: solo eventos relevantes
                     if mtype in ("FAULT","CHARGE_COMPLETE"):
                         print(f"[Monitor {self.cp_id}] Status message: {data}")
@@ -105,13 +109,21 @@ class Monitor:
         # Si no recibe heartbeats por 3 intervalos (~15s) informa avería
         while True:
             time.sleep(5)
+            now = time.time()
             if self.last_heartbeat is None:
+                # Si nunca hemos recibido latido y ya pasó el umbral, marcamos avería
+                if not self._fault_sent and (now - self._start_ts) > 15:
+                    print(f"[Monitor {self.cp_id}] Sin heartbeats iniciales: enviando FAULT")
+                    self.send_fault()
+                    self.engine_state = "faulty"
+                    self._fault_sent = True
                 continue
-            if time.time() - self.last_heartbeat > 15:
+            if now - self.last_heartbeat > 15:
                 print(f"[Monitor {self.cp_id}] Heartbeat perdido: enviando FAULT")
                 self.send_fault()
-                self.last_heartbeat = time.time()
+                self.last_heartbeat = now
                 self.engine_state = "disconnected"
+                self._fault_sent = True
 
     def compute_status(self):
         monitor_ok = True  # estamos vivos si llega aquí

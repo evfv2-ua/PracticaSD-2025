@@ -8,3 +8,7 @@ PyYAML==6.0.1
 
 # Utilidades
 python-dotenv==1.0.0
+
+# API opcional para dashboard web
+fastapi==0.115.5
+uvicorn==0.30.6

@@ -67,6 +67,22 @@ services:
       - ./Central/bdd:/app/Central/bdd
     restart: unless-stopped
 
+  # Frontend opcional (requiere build previo o usar la imagen).
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: evcharging-web
+    ports:
+      - "4173:80"
+    environment:
+      # Ajusta a la URL del API de la central (cuando se exponga).
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
 networks:
   evcharging-network:
     driver: bridge

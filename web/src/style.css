@@ -1,0 +1,217 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(124, 58, 237, 0.12), transparent 30%),
+              radial-gradient(circle at 80% 0%, rgba(6, 182, 212, 0.12), transparent 25%),
+              linear-gradient(135deg, #070c14, #0b1220 50%, #070c14);
+  color: #e6eef9;
+}
+
+h1, h2, h3 {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.content {
+  padding: 24px 28px 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.card {
+  background: rgba(15, 22, 39, 0.9);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  border-radius: 16px;
+  padding: 18px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.grid {
+  display: grid;
+  gap: 18px;
+}
+
+.grid.cols-2 {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.grid.cols-3 {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.grid.equal-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.scroll-card {
+  max-height: 440px;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th, .table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(62, 80, 122, 0.35);
+  text-align: left;
+  font-size: 14px;
+}
+
+.badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.status-ok {
+  background: rgba(34, 197, 94, 0.2);
+  color: #bbf7d0;
+}
+.status-charging {
+  background: rgba(94, 234, 212, 0.18);
+  color: #99f6e4;
+}
+.status-faulty {
+  background: rgba(248, 113, 113, 0.18);
+  color: #fca5a5;
+}
+.status-paused {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fcd34d;
+}
+.status-disconnected {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+}
+
+.btn {
+  border: 1px solid rgba(62, 80, 122, 0.6);
+  background: linear-gradient(135deg, #121a2d, #0e1627);
+  color: #e6eef9;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.btn.secondary {
+  border-color: rgba(62, 80, 122, 0.5);
+}
+
+.btn.danger {
+  border-color: #ef4444;
+  color: #fca5a5;
+  background: linear-gradient(135deg, #1a0f12, #1d1418);
+}
+
+.btn.primary {
+  border-color: #8b5cf6;
+  color: #f4e8ff;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(6, 182, 212, 0.12));
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0,0,0,0.25);
+}
+
+.success {
+  border-color: #34d399 !important;
+  color: #bbf7d0;
+  animation: pulse 1s ease;
+}
+
+.hero {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress {
+  background: #0c1425;
+  border: 1px solid rgba(62, 80, 122, 0.35);
+  border-radius: 12px;
+  overflow: hidden;
+  height: 14px;
+}
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #06b6d4);
+  transition: width 0.5s ease;
+}
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.status-chip.ok {
+  background: rgba(34, 197, 94, 0.2);
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.status-chip.err {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.98); opacity: 0.9; }
+  50% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.98); opacity: 0.9; }
+}
+
+.stack {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #1f2a44;
+  background: #0b1221;
+  color: #e8ecf8;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.muted {
+  color: #94a3b8;
+  font-size: 13px;
+}
