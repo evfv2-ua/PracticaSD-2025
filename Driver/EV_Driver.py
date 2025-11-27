@@ -122,6 +122,7 @@ class Driver:
             except Exception as e:
                 print(f"[Driver {self.id_driver}] Error inesperado en kafka_loop: {e}")
                 time.sleep(1)
+        print(f"[Driver {self.id_driver}] kafka_loop terminado.")
 
     def user_interface(self):
         def print_menu():
@@ -321,6 +322,20 @@ class Driver:
             # Mensajes informativos globales
             text = data.get('message', '')
             print(f"[Driver {self.id_driver}] Broadcast: {text}")
+        elif mtype == 'AUTO_RUN':
+            if getattr(self, "_auto_thread", None) and self._auto_thread.is_alive():
+                print(f"[Driver {self.id_driver}] AUTO_RUN ignorado: ya hay una carga automática en curso.")
+                return
+            print(f"[Driver {self.id_driver}] AUTO_RUN recibido: iniciando carga automática.")
+            self._auto_thread = threading.Thread(target=self.solicitar_recarga_fichero, daemon=True)
+            self._auto_thread.start()
+        elif mtype == 'WAITING':
+            pos = data.get('position')
+            cp = data.get('cp_id')
+            print(f"[Driver {self.id_driver}] En cola para {cp} (posición {pos}).")
+            with self.lock:
+                self.state = 'waiting'
+                self.current_cp = cp
         else:
             print(f"[Driver {self.id_driver}] Mensaje desconocido recibido: {data}")
 

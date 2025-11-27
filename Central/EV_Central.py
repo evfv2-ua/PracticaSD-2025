@@ -50,6 +50,7 @@ conn.row_factory = sqlite3.Row
 CP_REGISTRY = {}
 # Sesiones activas: (cp_id, driver_id) -> session_id
 ACTIVE_SESSIONS = {}
+CP_QUEUES = {}  # cp_id -> lista de driver_ids en espera
 STALE_THRESHOLD = 8   # segundos sin heartbeat -> desconectado
 drivers_state = {}  # driver_id -> {state, cp_id, last_update}
 DRIVER_STALE = 8   # segundos sin novedades -> se oculta del snapshot
@@ -71,6 +72,46 @@ def driver_is_connected(driver_id, now=None):
     if now is None:
         now = time.time()
     return (now - lu) <= DRIVER_STALE
+
+def cp_busy(cp_id):
+    for (cp, drv), sid in ACTIVE_SESSIONS.items():
+        if cp == cp_id:
+            return drv
+    return None
+
+def enqueue_driver(cp_id, driver_id):
+    q = CP_QUEUES.setdefault(cp_id, [])
+    if driver_id not in q:
+        q.append(driver_id)
+    return q.index(driver_id) + 1
+
+def dispatch_next_from_queue(cp_id):
+    """Autoriza al siguiente driver en cola si el CP está libre y operativo."""
+    q = CP_QUEUES.get(cp_id, [])
+    if not q:
+        return
+    now = time.time()
+    cp_info = CP_REGISTRY.get(cp_id)
+    if not cp_info or cp_info.get("status") != "ok":
+        return
+    if cp_busy(cp_id):
+        return
+    while q:
+        drv = q.pop(0)
+        if not driver_is_connected(drv, now):
+            continue
+        session_id = ACTIVE_SESSIONS.get((cp_id, drv))
+        if not session_id:
+            session_id = start_session(cp_id, drv)
+            ACTIVE_SESSIONS[(cp_id, drv)] = session_id
+        set_driver_state(drv, "authorized", cp_id)
+        resp = {"type":"AUTH_OK", "driver_id": drv, "cp_id": cp_id}
+        producer.send(TOPIC_DRIVER, resp)
+        cmd = {"type":"START_CHARGE", "cp_id": cp_id, "driver_id": drv, "timestamp": time.time()}
+        producer.send(TOPIC_CP_COMMANDS, cmd)
+        producer.flush()
+        log_event(cp_id, "AUTH_OK", f"Driver {drv} autorizado desde cola")
+        break
 
 def init_db():
     with db_lock:
@@ -198,6 +239,14 @@ def handle_driver_messages():
                 producer.send(TOPIC_DRIVER, resp); producer.flush()
                 set_driver_state(driver_id, "idle", None)
                 continue
+            # Si ya está ocupado por otro driver, pasa a cola
+            busy_drv = cp_busy(cp_id)
+            if busy_drv and busy_drv != driver_id:
+                pos = enqueue_driver(cp_id, driver_id)
+                waiting = {"type":"WAITING", "driver_id": driver_id, "cp_id": cp_id, "position": pos}
+                producer.send(TOPIC_DRIVER, waiting); producer.flush()
+                set_driver_state(driver_id, "waiting", cp_id)
+                continue
             if cp_info.get("status") == "ok":
                 resp = {"type":"AUTH_OK", "driver_id": driver_id, "cp_id": cp_id}
                 producer.send(TOPIC_DRIVER, resp); producer.flush()
@@ -216,6 +265,11 @@ def handle_driver_messages():
         elif mtype == "CANCEL_CHARGE":
             driver_id = data.get("driver_id")
             cp_id = data.get("cp_id")
+            # Si estaba en cola, lo retiramos
+            q = CP_QUEUES.get(cp_id, [])
+            if driver_id in q:
+                q = [d for d in q if d != driver_id]
+                CP_QUEUES[cp_id] = q
             cmd = {"type":"CANCEL_CHARGE", "driver_id": driver_id, "cp_id": cp_id, "timestamp": time.time()}
             producer.send(TOPIC_CP_COMMANDS, cmd); producer.flush()
             log_event(cp_id or "ALL", "CANCEL", f"Cancel solicitado por {driver_id}")
@@ -280,6 +334,7 @@ def handle_cp_messages():
                 producer.send(TOPIC_DRIVER, finish); producer.flush()
                 set_driver_state(driver_id, "idle", None)
             log_event(cp_id, "CHARGE_COMPLETE", f"Driver {driver_id} energía {data.get('energy')}")
+            dispatch_next_from_queue(cp_id)
         elif mtype == "FAULT":
             if is_monitor:
                 mark_monitor_seen(cp_id)
@@ -297,6 +352,13 @@ def handle_cp_messages():
                     err = {"type":"CP_ERROR", "driver_id": drv, "error": "CP_fault"}
                     producer.send(TOPIC_DRIVER, err); producer.flush()
                     drivers_state[drv] = {"state":"error", "cp_id": None}
+            # Vaciar cola y notificar
+            queued = CP_QUEUES.pop(cp_id, [])
+            for drv in queued:
+                err = {"type":"CP_ERROR", "driver_id": drv, "error": "CP_fault"}
+                producer.send(TOPIC_DRIVER, err)
+                drivers_state[drv] = {"state":"error", "cp_id": None}
+            producer.flush()
         else:
             log_event(cp_id, "UNKNOWN", f"Tipo desconocido {mtype}")
 
@@ -308,6 +370,7 @@ def admin_console():
         print("Comandos:")
         print("  list                     - Listar CPs conocidos")
         print("  list-drivers             - Listar drivers activos")
+        print("  auto-all                 - Enviar señal de carga automática a todos los drivers")
         print("  pause <cp|all>           - Pausar carga(s)")
         print("  resume <cp|all>          - Reanudar carga(s)")
         print("  stop <cp|all>            - Detener carga(s)")
@@ -355,6 +418,10 @@ def admin_console():
             producer.send(TOPIC_CP_COMMANDS, payload); producer.flush()
             log_event(target or "ALL", mtype, "Enviado desde consola")
             print(f"Enviado {mtype} a {target or 'ALL'}")
+        elif action == "auto-all":
+            broadcast = {"type":"AUTO_RUN", "message":"Iniciar carga automática"}
+            producer.send(TOPIC_DRIVER, broadcast); producer.flush()
+            print("Señal AUTO_RUN enviada a todos los drivers.")
         elif action in ("q","quit","exit"):
             break
         else:
@@ -487,6 +554,12 @@ def command(payload: dict):
             return {"status":"error", "message":"CP no disponible"}
         if not driver_is_connected(driver_id, now):
             return {"status":"error", "message":"Driver desconectado"}
+        if cp_busy(cp_id) and cp_busy(cp_id) != driver_id:
+            pos = enqueue_driver(cp_id, driver_id)
+            waiting = {"type":"WAITING", "driver_id": driver_id, "cp_id": cp_id, "position": pos}
+            producer.send(TOPIC_DRIVER, waiting); producer.flush()
+            set_driver_state(driver_id, "waiting", cp_id)
+            return {"status":"queued", "message": f"Driver en cola posición {pos}"}
         # inicia sesión
         session_id = ACTIVE_SESSIONS.get((cp_id, driver_id))
         if not session_id:
