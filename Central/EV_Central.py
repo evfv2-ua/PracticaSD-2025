@@ -46,13 +46,17 @@ db_lock = threading.Lock()
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 
-# Registro de CPs: cp_id -> info dict {registrado: bool, last_seen: ts, status: str}
+# Registro de CPs: cp_id -> info dict {registrado: bool, last_seen: ts (engine), monitor_last_seen: ts, status: str}
 CP_REGISTRY = {}
 # Sesiones activas: (cp_id, driver_id) -> session_id
 ACTIVE_SESSIONS = {}
 STALE_THRESHOLD = 15  # segundos sin heartbeat -> desconectado
 drivers_state = {}  # driver_id -> {state, cp_id, last_update}
 DRIVER_STALE = 300   # segundos sin novedades -> se oculta del snapshot
+
+def cp_entry(cp_id):
+    """Devuelve la entrada del CP en memoria, inicializando si no existe."""
+    return CP_REGISTRY.setdefault(cp_id, {"registered": False, "last_seen": None, "monitor_last_seen": None, "status": "unknown", "info": {}})
 
 def set_driver_state(driver_id, state, cp_id=None):
     drivers_state[driver_id] = {"state": state, "cp_id": cp_id, "last_update": time.time()}
@@ -97,7 +101,7 @@ def init_db():
                     last_seen = datetime.fromisoformat(row["last_update"]).timestamp()
                 except Exception:
                     last_seen = time.time()
-            CP_REGISTRY[row["cp_id"]] = {"registered": True, "last_seen": last_seen, "status": row["state"], "info": {}}
+            CP_REGISTRY[row["cp_id"]] = {"registered": True, "last_seen": last_seen, "monitor_last_seen": None, "status": row["state"], "info": {}}
 
 def now_ts():
     return datetime.now(timezone.utc).isoformat()
@@ -108,7 +112,7 @@ def log_event(cp_id, event_type, description):
                      (now_ts(), cp_id, event_type, description))
         conn.commit()
 
-def upsert_cp(cp_id, state):
+def upsert_cp(cp_id, state, source="engine"):
     ts = now_ts()
     with db_lock:
         cur = conn.execute("SELECT cp_id FROM charging_points WHERE cp_id=?", (cp_id,))
@@ -117,7 +121,19 @@ def upsert_cp(cp_id, state):
         else:
             conn.execute("INSERT INTO charging_points(cp_id, state, last_update, total_charges) VALUES(?,?,?,0)", (cp_id, state, ts))
         conn.commit()
-    CP_REGISTRY[cp_id] = {"registered": True, "last_seen": time.time(), "status": state, "info": {}}
+    entry = cp_entry(cp_id)
+    entry["registered"] = True
+    entry["status"] = state
+    now_ts_sec = time.time()
+    if source == "monitor":
+        entry["monitor_last_seen"] = now_ts_sec
+    else:
+        entry["last_seen"] = now_ts_sec
+
+def mark_monitor_seen(cp_id):
+    entry = cp_entry(cp_id)
+    entry["registered"] = True
+    entry["monitor_last_seen"] = time.time()
 
 def start_session(cp_id, driver_id):
     with db_lock:
@@ -164,7 +180,9 @@ def handle_driver_messages():
                 set_driver_state(driver_id, "idle", None)
                 continue
             # Desconectado por falta de latidos
-            if cp_info.get("last_seen") and now - cp_info["last_seen"] > STALE_THRESHOLD:
+            last_seen_monitor = cp_info.get("monitor_last_seen")
+            last_seen_any = last_seen_monitor or cp_info.get("last_seen")
+            if last_seen_any and now - last_seen_any > STALE_THRESHOLD:
                 resp = {"type":"AUTH_DENIED", "driver_id": driver_id, "reason":"CP_disconnected"}
                 producer.send(TOPIC_DRIVER, resp); producer.flush()
                 set_driver_state(driver_id, "idle", None)
@@ -203,23 +221,38 @@ def handle_cp_messages():
         data = msg.value
         mtype = data.get("type")
         cp_id = data.get("cp_id")
+        origin = data.get("origin")
+        is_monitor = origin == "monitor"
         if mtype == "REGISTER":
-            upsert_cp(cp_id, "ok")
+            if is_monitor:
+                mark_monitor_seen(cp_id)
+                upsert_cp(cp_id, "ok", source="monitor")
+            else:
+                upsert_cp(cp_id, "ok")
             log_event(cp_id, "REGISTER", "CP registrado")
         elif mtype in ("HEARTBEAT", "STATUS"):
             st = data.get("status","ok")
-            entry = CP_REGISTRY.setdefault(cp_id, {"registered":False, "last_seen": None, "status": "unknown", "info":{}})
-            entry["last_seen"] = time.time()
-            entry["status"] = st
-            # Solo actualizamos a faulty si viene un FAULT; los heartbeats con faulty se ignoran.
-            if st != "faulty":
-                upsert_cp(cp_id, st)
+            if is_monitor:
+                mark_monitor_seen(cp_id)
+                entry = cp_entry(cp_id)
+                entry["status"] = st
+            else:
+                # Solo actualizamos a faulty si viene un FAULT; los heartbeats con faulty se ignoran.
+                if st != "faulty":
+                    upsert_cp(cp_id, st)
+                else:
+                    entry = cp_entry(cp_id)
+                    entry["last_seen"] = time.time()
+                    entry["status"] = st
+        elif mtype == "MONITOR_HEARTBEAT":
+            mark_monitor_seen(cp_id)
         elif mtype == "CHARGE_DATA":
             driver_id = data.get("driver_id")
             session_id = ACTIVE_SESSIONS.get((cp_id, driver_id))
             if not session_id:
                 session_id = start_session(cp_id, driver_id)
                 ACTIVE_SESSIONS[(cp_id, driver_id)] = session_id
+            cp_entry(cp_id)["last_seen"] = time.time()
             update_session(session_id, energy=data.get("energy"), cost=data.get("cost"))
             if driver_id:
                 set_driver_state(driver_id, "charging", cp_id)
@@ -227,6 +260,7 @@ def handle_cp_messages():
                 producer.send(TOPIC_DRIVER, update); producer.flush()
         elif mtype == "CHARGE_COMPLETE":
             driver_id = data.get("driver_id")
+            cp_entry(cp_id)["last_seen"] = time.time()
             session_id = ACTIVE_SESSIONS.pop((cp_id, driver_id), None)
             update_session(session_id, energy=data.get("energy"), cost=data.get("cost"), end=True, cancelled=data.get("cancelled", False)) if session_id else None
             ticket = {"cp_id": cp_id, "energy": data.get("energy"), "cost": data.get("cost"), "timestamp": time.time()}
@@ -236,7 +270,11 @@ def handle_cp_messages():
                 set_driver_state(driver_id, "idle", None)
             log_event(cp_id, "CHARGE_COMPLETE", f"Driver {driver_id} energía {data.get('energy')}")
         elif mtype == "FAULT":
-            upsert_cp(cp_id, "faulty")
+            if is_monitor:
+                mark_monitor_seen(cp_id)
+                upsert_cp(cp_id, "faulty", source="monitor")
+            else:
+                upsert_cp(cp_id, "faulty")
             log_event(cp_id, "FAULT", "Reporte de avería")
             broadcast = {"type":"BROADCAST", "message": f"CP {cp_id} reported FAULT"}
             producer.send(TOPIC_DRIVER, broadcast); producer.flush()
@@ -276,17 +314,21 @@ def admin_console():
         action = parts[0]
         if action == "list":
             for cp_id, info in CP_REGISTRY.items():
-                last_seen = info.get("last_seen")
-                if isinstance(last_seen, str):
+                monitor_seen = info.get("monitor_last_seen")
+                engine_seen = info.get("last_seen")
+                if isinstance(engine_seen, str):
                     try:
-                        last_seen = datetime.fromisoformat(last_seen).timestamp()
+                        engine_seen = datetime.fromisoformat(engine_seen).timestamp()
                     except Exception:
-                        last_seen = time.time()
+                        engine_seen = time.time()
+                last_seen = monitor_seen or engine_seen
                 if last_seen is None:
                     delta_txt = "never"
                 else:
                     delta_txt = f"{time.time()-last_seen:.1f}s ago"
-                print(f"{cp_id}: {info.get('status','?')} (seen {delta_txt})")
+                mon_txt = f"mon {time.time()-monitor_seen:.1f}s" if monitor_seen else "mon never"
+                eng_txt = f"eng {time.time()-engine_seen:.1f}s" if engine_seen else "eng never"
+                print(f"{cp_id}: {info.get('status','?')} (seen {delta_txt} | {mon_txt} | {eng_txt})")
         elif action == "list-drivers":
             now = time.time()
             if not drivers_state:
@@ -336,14 +378,19 @@ def snapshot_data():
                 active_sessions.append(dict(row))
     for cp_id, info in CP_REGISTRY.items():
         status_raw = info.get("status","unknown")
-        last_seen = info.get("last_seen")
-        if isinstance(last_seen, str):
+        engine_seen = info.get("last_seen")
+        monitor_seen = info.get("monitor_last_seen")
+        if isinstance(engine_seen, str):
             try:
-                last_seen = datetime.fromisoformat(last_seen).timestamp()
+                engine_seen = datetime.fromisoformat(engine_seen).timestamp()
             except Exception:
-                last_seen = None
-        stale = (last_seen is None) or (now - last_seen > STALE_THRESHOLD)
-        if stale:
+                engine_seen = None
+        monitor_stale = (monitor_seen is None) or (now - monitor_seen > STALE_THRESHOLD)
+        engine_stale = (engine_seen is None) or (now - engine_seen > STALE_THRESHOLD)
+        effective_seen = monitor_seen or engine_seen
+        if monitor_stale:
+            status = "DESCONECTADO"
+        elif engine_stale:
             status = "DESCONECTADO"
         else:
             if status_raw == "faulty":
@@ -355,8 +402,10 @@ def snapshot_data():
         cps.append({
             "cp_id": cp_id,
             "status": status,
-            "last_seen": last_seen,
-            "last_seen_delta": (now - last_seen) if last_seen else None,
+            "last_seen": effective_seen,
+            "last_seen_delta": (now - effective_seen) if effective_seen else None,
+            "monitor_last_seen": monitor_seen,
+            "engine_last_seen": engine_seen,
             "driver_id": active_by_cp.get(cp_id),
         })
     sessions = []
@@ -419,7 +468,9 @@ def command(payload: dict):
         now = time.time()
         if not cp_info or not cp_info.get("registered", False):
             return {"status":"error", "message":"CP no registrado"}
-        if cp_info.get("last_seen") and now - cp_info["last_seen"] > STALE_THRESHOLD:
+        last_seen_monitor = cp_info.get("monitor_last_seen")
+        last_seen_any = last_seen_monitor or cp_info.get("last_seen")
+        if last_seen_any and now - last_seen_any > STALE_THRESHOLD:
             return {"status":"error", "message":"CP desconectado"}
         if cp_info.get("status") != "ok":
             return {"status":"error", "message":"CP no disponible"}

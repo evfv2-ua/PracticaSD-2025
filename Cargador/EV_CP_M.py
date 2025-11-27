@@ -45,10 +45,11 @@ class Monitor:
         self.engine_state = "unknown"  # ok | faulty | disconnected | unknown
         self._start_ts = time.time()
         self._fault_sent = False
+        self.monitor_hb_interval = 5
         self._connect_kafka()
         self.is_faulty = False
         # Register on start
-        reg = {"type":"REGISTER", "cp_id": self.cp_id, "info": {"monitor":"kafka_monitor"}}
+        reg = {"type":"REGISTER", "cp_id": self.cp_id, "origin": "monitor", "info": {"monitor":"kafka_monitor"}}
         self.producer.send(TOPIC_CP_STATUS, reg); self.producer.flush()
 
     def _connect_kafka(self):
@@ -67,6 +68,7 @@ class Monitor:
     def start(self):
         threading.Thread(target=self.listen_status, daemon=True).start()
         threading.Thread(target=self.watchdog_loop, daemon=True).start()
+        threading.Thread(target=self.monitor_heartbeat_loop, daemon=True).start()
         try:
             self.print_menu()
             while True:
@@ -111,11 +113,11 @@ class Monitor:
                 time.sleep(1)
 
     def send_fault(self):
-        fault = {"type":"FAULT", "cp_id": self.cp_id, "timestamp": datetime.now().isoformat()}
+        fault = {"type":"FAULT", "cp_id": self.cp_id, "origin": "monitor", "timestamp": datetime.now().isoformat()}
         self.producer.send(TOPIC_CP_STATUS, fault); self.producer.flush()
 
     def send_repair(self):
-        repair = {"type":"STATUS", "cp_id": self.cp_id, "status":"ok", "timestamp": datetime.now().isoformat()}
+        repair = {"type":"STATUS", "cp_id": self.cp_id, "origin": "monitor", "status":"ok", "timestamp": datetime.now().isoformat()}
         self.producer.send(TOPIC_CP_STATUS, repair); self.producer.flush()
 
     def watchdog_loop(self):
@@ -137,6 +139,19 @@ class Monitor:
                 self.last_heartbeat = now
                 self.engine_state = "disconnected"
                 self._fault_sent = True
+
+    def monitor_heartbeat_loop(self):
+        while True:
+            try:
+                hb = {"type":"MONITOR_HEARTBEAT", "cp_id": self.cp_id, "origin": "monitor", "timestamp": datetime.now().isoformat()}
+                self.producer.send(TOPIC_CP_STATUS, hb); self.producer.flush()
+            except (KafkaError, NoBrokersAvailable) as e:
+                print(f"[Monitor {self.cp_id}] Error enviando heartbeat: {e}. Reintentando conexión...")
+                time.sleep(1)
+                self._connect_kafka()
+            except Exception as e:
+                print(f"[Monitor {self.cp_id}] Error inesperado en heartbeat monitor: {e}")
+            time.sleep(self.monitor_hb_interval)
 
     def compute_status(self):
         monitor_ok = True  # estamos vivos si llega aquí

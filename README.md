@@ -14,6 +14,7 @@
    (El `docker-compose.yml` ya usa `HOST_IP` en `KAFKA_ADVERTISED_LISTENERS`.)
 3. Arranca la central (mismo host):  
    ```bash
+   export CENTRAL_DB=/tmp/evcharging.db
    export KAFKA_BROKER=10.0.0.5:9092
    make run-central
    ```
