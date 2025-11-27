@@ -50,9 +50,9 @@ conn.row_factory = sqlite3.Row
 CP_REGISTRY = {}
 # Sesiones activas: (cp_id, driver_id) -> session_id
 ACTIVE_SESSIONS = {}
-STALE_THRESHOLD = 15  # segundos sin heartbeat -> desconectado
+STALE_THRESHOLD = 8   # segundos sin heartbeat -> desconectado
 drivers_state = {}  # driver_id -> {state, cp_id, last_update}
-DRIVER_STALE = 300   # segundos sin novedades -> se oculta del snapshot
+DRIVER_STALE = 8   # segundos sin novedades -> se oculta del snapshot
 
 def cp_entry(cp_id):
     """Devuelve la entrada del CP en memoria, inicializando si no existe."""
@@ -60,6 +60,17 @@ def cp_entry(cp_id):
 
 def set_driver_state(driver_id, state, cp_id=None):
     drivers_state[driver_id] = {"state": state, "cp_id": cp_id, "last_update": time.time()}
+
+def driver_is_connected(driver_id, now=None):
+    info = drivers_state.get(driver_id)
+    if not info:
+        return False
+    lu = info.get("last_update")
+    if not lu:
+        return False
+    if now is None:
+        now = time.time()
+    return (now - lu) <= DRIVER_STALE
 
 def init_db():
     with db_lock:
@@ -474,6 +485,8 @@ def command(payload: dict):
             return {"status":"error", "message":"CP desconectado"}
         if cp_info.get("status") != "ok":
             return {"status":"error", "message":"CP no disponible"}
+        if not driver_is_connected(driver_id, now):
+            return {"status":"error", "message":"Driver desconectado"}
         # inicia sesión
         session_id = ACTIVE_SESSIONS.get((cp_id, driver_id))
         if not session_id:

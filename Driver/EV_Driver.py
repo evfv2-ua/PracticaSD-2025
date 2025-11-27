@@ -178,7 +178,7 @@ class Driver:
                 self.producer.flush(timeout=2)
             except Exception:
                 pass
-            time.sleep(15)
+            time.sleep(5)
 
     def solicitar_recarga(self, cp_id):
         """Envía solicitud de recarga a CENTRAL por Kafka."""
